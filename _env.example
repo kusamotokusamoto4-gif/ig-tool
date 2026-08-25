@@ -1,0 +1,7 @@
+IG_USER_ID=あなたのInstagramビジネスアカウントID
+IG_ACCESS_TOKEN=あなたの長期アクセストークン
+
+# トークン自動更新のために必要（Render環境変数として設定）
+REFRESH_SECRET=自分で決めた合言葉（他人に推測されない文字列）
+RENDER_API_KEY=RenderのAPIキー
+RENDER_SERVICE_ID=RenderのサービスID（例: srv-xxxxxxxxxxxx）
