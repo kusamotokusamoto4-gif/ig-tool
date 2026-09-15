@@ -1,19 +1,5 @@
 /**
- * かんたん投稿画面（Webサーバー）。
- *
- * ローカルでの使い方:
- *   npm start
- *   ブラウザで http://localhost:3000 を開く
- *
- * Renderにデプロイした場合は、発行されたURL（例: https://xxxx.onrender.com）に
- * どの端末からでもアクセスできる。
- *
- * できること:
- *   ・物件番号を入力すると、HPに載っている画像を「全部」表示
- *   ・比率がInstagramの対応範囲外の画像は、自動で白い余白を足したプレビューを表示
- *     （余白を足した部分が分かるよう、点線の目印をつけて表示）
- *   ・好きな画像を選んで（最大10枚）投稿できる
- *   ・キャプションもその場で編集できる
+ * かんたん投稿画面（Render対応版Webサーバー）。
  */
 
 const express = require("express");
@@ -22,13 +8,13 @@ const crypto = require("crypto");
 const { extractProperty, buildCaption } = require("./extract-property");
 const { publishCarousel } = require("./instagram-api");
 const { padToValidRatio } = require("./image-processing");
+const { refreshAndPersistToken } = require("./token-refresh");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 画像URL(元)ごとに、加工結果をメモリ上に一時保存しておくキャッシュ。
+// 画像URL(元)ごとに、加工結果をメモリ上に一時保存しておくキャッシュ
 const imageCache = new Map();
-// プレビュー配信用の短いID → 元の画像URL
 const hashToUrl = new Map();
 
 function hashFor(url) {
@@ -118,25 +104,27 @@ app.post("/api/publish", async (req, res) => {
   res.setHeader("Connection", "keep-alive");
   const send = (msg) => res.write(`data: ${JSON.stringify({ msg })}\n\n`);
 
-  // このアプリ自身の公開URL（Renderにデプロイ済みなら、そのままInstagramから見える）
-  const publicBase = `${req.protocol}://${req.get("host")}`;
-
   try {
+    // Render自身の公開ベースURLを取得（リクエストヘッダーから自動判定、または環境変数）
+    const host = req.headers["x-forwarded-host"] || req.get("host");
+    const protocol = req.headers["x-forwarded-proto"] || "https";
+    const publicBaseUrl = `${protocol}://${host}`;
+
     const finalUrls = [];
     for (const url of images) {
       const entry = imageCache.get(url);
       if (entry && entry.padded) {
-        if (!entry.publicUrl) {
-          const hash = hashFor(url);
-          hashToUrl.set(hash, url);
-          entry.publicUrl = `${publicBase}/preview/${hash}`;
-        }
-        finalUrls.push(entry.publicUrl);
+        // 白い余白を足した画像の場合、Render自身のURLを使った公開リンクをInstagramに教える
+        const hash = hashFor(url);
+        hashToUrl.set(hash, url);
+        const publicUrl = `${publicBaseUrl}/preview/${hash}`;
+        finalUrls.push(publicUrl);
       } else {
         finalUrls.push(url);
       }
     }
 
+    send("Instagramへ投稿を作成中...");
     const mediaId = await publishCarousel(finalUrls, caption, send);
     res.write(`data: ${JSON.stringify({ done: true, mediaId })}\n\n`);
   } catch (err) {
@@ -146,72 +134,30 @@ app.post("/api/publish", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ 投稿画面を起動しました: http://localhost:${PORT}`);
-});
+// GitHub Actions等の外部スケジューラから定期的に叩かれる、トークン自動更新用エンドポイント。
+// ?secret=... がRenderに設定したREFRESH_SECRETと一致しないと実行されない。
+app.post("/api/refresh-token", async (req, res) => {
+  const expected = process.env.REFRESH_SECRET;
+  const provided = req.query.secret;
 
-/**
- * トークン自動更新エンドポイント。
- * 外部の定期実行サービス（例: cron-job.org）から、
- *   GET /api/internal/refresh-token?secret=(REFRESH_SECRETの値)
- * を定期的に呼んでもらうことで、Instagramの長期アクセストークンを更新し、
- * Renderのサービス環境変数（IG_ACCESS_TOKEN）にも自動で書き込み直す。
- *
- * 必要な環境変数:
- *   REFRESH_SECRET     このURLを呼べる人を制限するための合言葉（自分で決める）
- *   RENDER_API_KEY      Renderのアカウント設定で発行するAPIキー
- *   RENDER_SERVICE_ID   このWebサービスのID（RenderのURLに含まれる "srv-..." の部分）
- */
-app.get("/api/internal/refresh-token", async (req, res) => {
-  if (!process.env.REFRESH_SECRET || req.query.secret !== process.env.REFRESH_SECRET) {
+  if (!expected || provided !== expected) {
     return res.status(403).json({ error: "許可されていません。" });
   }
 
   try {
-    const currentToken = process.env.IG_ACCESS_TOKEN;
-    if (!currentToken) throw new Error("IG_ACCESS_TOKENが設定されていません。");
-
-    const igParams = new URLSearchParams({
-      grant_type: "ig_refresh_token",
-      access_token: currentToken,
-    });
-    const igRes = await fetch(`https://graph.instagram.com/refresh_access_token?${igParams}`);
-    const igData = await igRes.json();
-
-    if (igData.error) {
-      throw new Error(`Instagramトークン更新に失敗しました: ${JSON.stringify(igData.error)}`);
-    }
-
-    const newToken = igData.access_token;
-    process.env.IG_ACCESS_TOKEN = newToken; // このプロセス内では即反映
-
-    if (!process.env.RENDER_API_KEY || !process.env.RENDER_SERVICE_ID) {
-      throw new Error(
-        "トークン自体の更新は成功しましたが、RENDER_API_KEY / RENDER_SERVICE_ID が" +
-          "未設定のため、次回の再起動で元に戻ってしまいます。環境変数を設定してください。"
-      );
-    }
-
-    const renderRes = await fetch(
-      `https://api.render.com/v1/services/${process.env.RENDER_SERVICE_ID}/env-vars/IG_ACCESS_TOKEN`,
-      {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${process.env.RENDER_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ value: newToken }),
-      }
+    const result = await refreshAndPersistToken();
+    console.log(
+      `✅ トークン更新完了（有効期限: 約${result.expiresInDays}日後 / Render保存: ${
+        result.persisted ? "成功" : "未設定のためスキップ"
+      }）`
     );
-
-    if (!renderRes.ok) {
-      const errText = await renderRes.text();
-      throw new Error(`Renderの環境変数の更新に失敗しました: ${errText}`);
-    }
-
-    const days = Math.round(igData.expires_in / 86400);
-    res.json({ success: true, message: `トークンを更新しました（有効期限: 約${days}日後）` });
+    res.json({ ok: true, ...result });
   } catch (err) {
+    console.error("❌ トークン自動更新エラー:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ サーバーをポート ${PORT} で起動しました`);
 });
