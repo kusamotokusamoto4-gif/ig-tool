@@ -82,6 +82,18 @@ function extractTableFields($) {
   return fields;
 }
 
+// 投稿末尾に毎回入れる固定パーツ
+const CTA_TEXT = "物件詳細・お問合せはプロフィールのHPリンクからどうぞ。";
+
+const HASHTAGS = [
+  "#田舎暮らし", "#地方移住", "#移住", "#セカンドライフ", "#FIRE",
+  "#リモートワーク", "#古民家", "#DIY", "#海", "#海水浴",
+  "#サーフィン", "#キャンプ", "#温泉", "#花火", "#不動産",
+  "#売家", "#別荘", "#ルームツアー", "#京都", "#京丹後市",
+  "#クサモト", "#網野町", "#丹後町", "#久美浜町", "#峰山町",
+  "#弥栄町", "#大宮町", "#宮津市", "#伊根町", "#城崎温泉",
+];
+
 const PRIORITY_FIELDS = [
   ["住所", "📍所在地"],
   ["所在地", "📍所在地"],
@@ -113,9 +125,9 @@ function buildCaption({ title, fields, description, propertyId }) {
 
   lines.push("");
   lines.push(`物件番号：${propertyId}`);
-  lines.push("詳しくはHPまたはお問合せください。");
+  lines.push(CTA_TEXT);
   lines.push("");
-  lines.push("#京丹後市 #不動産 #クサモト");
+  lines.push(HASHTAGS.join(" "));
 
   return lines.join("\n");
 }
