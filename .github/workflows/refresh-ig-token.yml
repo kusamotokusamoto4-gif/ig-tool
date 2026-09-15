@@ -1,0 +1,15 @@
+name: Instagramトークン自動更新
+
+on:
+  schedule:
+    # 毎月1日 午前3時(UTC) = 日本時間の正午ごろ に実行
+    - cron: "0 3 1 * *"
+  workflow_dispatch: {} # GitHub上の「Run workflow」ボタンで手動実行もできるように
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: トークン更新エンドポイントを呼び出す
+        run: |
+          curl -sf -X POST "https://ig-tool-i9ya.onrender.com/api/refresh-token?secret=${{ secrets.REFRESH_SECRET }}"
