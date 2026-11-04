@@ -255,5 +255,3 @@ app.get("/api/internal/refresh-token", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ 投稿画面を起動しました: http://localhost:${PORT}`);
 });
- 
-Claude が応答を完了しました
