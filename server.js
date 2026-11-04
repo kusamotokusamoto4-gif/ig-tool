@@ -23,7 +23,6 @@ Claude
 
 
 
-Server · JS
 /**
  * かんたん投稿画面（Webサーバー）。
  *
